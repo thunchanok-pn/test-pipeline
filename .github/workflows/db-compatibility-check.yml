@@ -1,0 +1,78 @@
+name: DB Compatibility Testing (PostgreSQL 16-Alpine)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  # Allows external applications to trigger this via workflow_call or repository_dispatch if needed
+  workflow_dispatch:
+
+jobs:
+  compatibility-test:
+    name: Test App Compatibility
+    runs-on: ubuntu-latest
+
+    # Define PostgreSQL 16-Alpine as a service container
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: compatibility_test_db
+        # Ensure the postgres container is ready before starting the steps
+        options: >-
+          --health-cmd "pg_isready -U test_user -d compatibility_test_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps port 5432 on the service container to port 5432 on the host runner
+          - 5432:5432
+
+    steps:
+      # Step 1: Check out the application code
+      - name: Checkout Application Code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up PostgreSQL Client Tools (Optional: if you need to seed or migrate from host)
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      # Step 3: Run Database Migrations / Schema Initialization
+      # Replace this with your framework's migration command (e.g., prisma db push, alembic upgrade, knex migrate:latest)
+      - name: Initialize Database Schema
+        env:
+          PGPASSWORD: test_password
+        run: |
+          echo "Verifying DB connection..."
+          psql -h localhost -U test_user -d compatibility_test_db -c '\conninfo'
+          
+          # IF YOU HAVE AN SQL FILE TO SEED SCHEMA, UNCOMMENT THE LINE BELOW:
+          # psql -h localhost -U test_user -d compatibility_test_db -f path/to/schema.sql
+
+      # Step 4: Set up Application Environment (Example using Node.js, adjust for Python/Go/Java)
+      - name: Setup Node.js Environment
+        uses: actions/actions-setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Step 5: Install Application Dependencies
+      - name: Install Dependencies
+        run: npm ci
+
+      # Step 6: Run Compatibility & Integration Tests
+      # Inject the DB configuration via environment variables that your application reads
+      - name: Run Integration Tests
+        env:
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/compatibility_test_db
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: test_user
+          DB_PASSWORD: test_password
+          DB_NAME: compatibility_test_db
+        run: npm test
