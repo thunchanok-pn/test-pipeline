@@ -56,7 +56,7 @@ jobs:
 
       # Step 4: Set up Application Environment (Example using Node.js, adjust for Python/Go/Java)
       - name: Setup Node.js Environment
-        uses: actions/actions-setup-node@v4
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
