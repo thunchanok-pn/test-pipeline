@@ -5,7 +5,6 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  # Allows external applications to trigger this via workflow_call or repository_dispatch if needed
   workflow_dispatch:
 
 jobs:
@@ -13,68 +12,64 @@ jobs:
     name: Test App Compatibility
     runs-on: ubuntu-latest
 
-    # Define PostgreSQL 16-Alpine as a service container
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: compatibility_test_db
-        # Ensure the postgres container is ready before starting the steps
+          POSTGRES_USER: workflow_user
+          POSTGRES_PASSWORD: workflow_password
+          POSTGRES_DB: app_compatibility_db
         options: >-
-          --health-cmd "pg_isready -U test_user -d compatibility_test_db"
+          --health-cmd "pg_isready -U workflow_user -d app_compatibility_db"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          # Maps port 5432 on the service container to port 5432 on the host runner
           - 5432:5432
 
     steps:
-      # Step 1: Check out the application code
+      # Step 1: Fetch repository source code
       - name: Checkout Application Code
         uses: actions/checkout@v4
 
-      # Step 2: Set up PostgreSQL Client Tools (Optional: if you need to seed or migrate from host)
+      # Step 2: Install native database toolbelt to initialize schema
       - name: Install PostgreSQL Client
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
-      # Step 3: Run Database Migrations / Schema Initialization
-      # Replace this with your framework's migration command (e.g., prisma db push, alembic upgrade, knex migrate:latest)
+      # Step 3: Populate the exact schema structure server.js looks for
       - name: Initialize Database Schema
         env:
-          PGPASSWORD: test_password
+          PGPASSWORD: workflow_password
         run: |
-          echo "Verifying DB connection..."
-          psql -h localhost -U test_user -d compatibility_test_db -c '\conninfo'
-          
-          # IF YOU HAVE AN SQL FILE TO SEED SCHEMA, UNCOMMENT THE LINE BELOW:
-          # psql -h localhost -U test_user -d compatibility_test_db -f path/to/schema.sql
+          echo "Seeding compatibility tables..."
+          psql -h localhost -U workflow_user -d app_compatibility_db -c "
+            CREATE TABLE IF NOT EXISTS app_users (
+              id SERIAL PRIMARY KEY,
+              username VARCHAR(255) NOT NULL,
+              password VARCHAR(255) NOT NULL,
+              active BOOLEAN DEFAULT true
+            );
+            INSERT INTO app_users (username, password, active) VALUES ('test_admin', 'secure_password', true);
+          "
 
-      # Step 4: Set up Application Environment (Example using Node.js, adjust for Python/Go/Java)
+      # Step 4: Provision Node environment using dependencies matching your workspace
       - name: Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # Step 5: Since it's a blank repo, initialize a dummy project so npm test doesn't crash
-      - name: Initialize Dummy Application
-        run: |
-          npm init -y
-          npm install pg
-          # Create a dummy test that always passes so the pipeline turns green
-          node -e "const fs = require('fs'); fs.writeFileSync('package.json', JSON.stringify({name:'test', version:'1.0.0', scripts:{test:'echo \"No tests specified yet!\" && exit 0'}}, null, 2))"
+      # Step 5: Install runtime workspace requirements
+      - name: Install Dependencies
+        run: npm install
 
-      # Step 6: Run Compatibility & Integration Tests
+      # Step 6: Trigger tests against the active PostgreSQL 16 instance
       - name: Run Integration Tests
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/compatibility_test_db
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: test_user
-          DB_PASSWORD: test_password
-          DB_NAME: compatibility_test_db
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: app_compatibility_db
+          POSTGRES_USER: workflow_user
+          POSTGRES_PASSWORD: workflow_password
         run: npm test
